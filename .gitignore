@@ -1,0 +1,66 @@
+# --- Ollama Specific ---
+# Never upload the actual model weights (Blobs)
+models/
+blobs/
+*.gguf
+*.bin
+*.lock
+
+# Ignore local Ollama configuration and logs
+.ollama/
+server.log
+server-*.log
+history
+
+# --- Quant / C# Specific ---
+[Bb]in/
+[Oo]bj/
+*.user
+*.suo
+*.sln.docstates
+
+# --- Python (if using Ollama-python) ---
+__pycache__/
+.env
+.venv# --- Ollama Specific ---
+# Never upload the actual model weights (Blobs)
+models/
+blobs/
+*.gguf
+*.bin
+
+# Ignore local Ollama configuration and logs
+.ollama/
+server.log
+server-*.log
+history
+
+# --- Quant / C# Specific ---
+[Bb]in/
+[Oo]bj/
+*.user
+*.suo
+*.sln.docstates
+
+# --- Python (if using Ollama-python) ---
+__pycache__/
+.env
+.venv
+.pythonenv
+env/
+venv/
+pythonenv/
+
+# --- OS / IDE Junk ---
+.DS_Store
+.vscode/
+.idea/
+env/
+venv/
+
+# --- OS / IDE Junk ---
+.DS_Store
+.vscode/
+.idea/
+Ollama/ollama workspace.code-workspace
+Ollama/ollama workspace.code-workspace
