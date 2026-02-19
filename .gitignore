@@ -1,6 +1,7 @@
 # --- Ollama Specific ---
 # Never upload the actual model weights (Blobs)
 models/
+piper/
 blobs/
 *.gguf
 *.bin

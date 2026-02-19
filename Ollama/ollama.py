@@ -16,11 +16,9 @@ import shutil
 import speech_recognition as sr
 from datetime import datetime
 #edgee tts is better tts than pyttsx3, but does not work offline
-import asyncio    
-import ctypes
 #espeak_folder = r"D:\Ollama\eSpeak NG"
 import pygame
-#region toggles
+#region configuration
 def set_want_cloud():
     try:
         with open("settings.json", "r") as f:
@@ -30,7 +28,7 @@ def set_want_cloud():
             return val == True
     except:
         return True # Default to True if file is busy
-#endregion
+
 def has_internet():
     try:
         # Connect to Google's DNS on port 53 (DNS)
@@ -43,6 +41,7 @@ def has_internet():
 def save(data):
     with open("settings.json", "w") as f:
         json.dump(data, f, indent=4) # indent makes it readable
+#endregion
 # Configuration
 WANT_CLOUD = set_want_cloud()
 USE_CLOUD = WANT_CLOUD if has_internet() else False
@@ -69,24 +68,8 @@ try:
     from plyer import notification as system_notification
 except ImportError:
     def system_notification(title, message, app_name, timeout):
-        pass
-    
-def check_to_online(prompt):
-    online_keywords = ['online', 'online mode', 'qwen']
-    if prompt.lower() in online_keywords:
-        with open("settings.json", "r") as f:
-            data = json.load(f)
-            data["online"] = True
-            save(data)
-            sys.exit(0) # Exit on local success
-def check_to_offline(prompt):
-    offline_keywords = ['offline mode', 'offline', 'gemma']
-    if prompt.lower().strip() in offline_keywords:
-        with open("settings.json", "r") as f:
-            data = json.load(f)
-            data["online"] = False
-            save(data)
-            sys.exit(0) # Exit on local success
+        print(f"\n[NOTIFICATION FAILBACK] {title}: {message}")
+#region config    
 #region muting
 def check_mute_keywords():
     try:
@@ -95,24 +78,36 @@ def check_mute_keywords():
             return not data.get("mute", True)
     except:
         return True # Default to True if file is busy
-def check_to_unmute(prompt):
-    unmute_keywords = ['talk', 'unmute']
-    if prompt.lower() in unmute_keywords:
+def check_and_toggle_setting(prompt, keywords, setting_key, new_value):
+    """
+    Checks if a prompt contains specific keywords to update a JSON setting.
+    """
+    if prompt.lower().strip() in keywords:
         with open("settings.json", "r") as f:
             data = json.load(f)
-            data["mute"] = False
-            save(data)
-            sys.exit(0) # Exit on local success
-def check_to_mute(prompt):
-    #print("checking prompt for mute" , prompt, flush=True)
-    mute_keywords = ['shut up', 'mute', 'silence']
-    if prompt.lower().strip() in mute_keywords:
-        with open("settings.json", "r") as f:
-            data = json.load(f)
-            data["mute"] = True
-            save(data)
-            #print("muted", flush=True)
-            sys.exit(0) # Exit on local success
+            
+        data[setting_key] = new_value
+        save(data)
+        
+        # Success exit
+        sys.exit(0)
+#endregion
+def check_for_real_time_query(prompt):
+    """Handles time queries locally and notifies on success."""
+    time_keywords = ['current time', 'what time is it', 'the time now']
+    
+    if any(keyword in prompt.lower() for keyword in time_keywords):
+        now = datetime.now()
+        time_string = now.strftime("The current local time is %A, %B %d, %Y at %I:%M:%S %p.")
+        
+        # Only successful output is printed
+        print("[LOCAL DATA RESPONSE]")
+        print("[OUTPUT] {time_string}".format(time_string=time_string))
+        
+        send_task_notification("🕒 Local Data Query", time_string)
+        return True
+    
+    return False 
 #endregion
 def clean_tts(text):
     print ("I said" , text, flush=True)
@@ -216,22 +211,6 @@ def portable_ls(base_dir, args):
     except Exception as e:
         return False, f"Portable ls failed: {e}"
 
-def check_for_real_time_query(prompt):
-    """Handles time queries locally and notifies on success."""
-    time_keywords = ['current time', 'what time is it', 'the time now']
-    
-    if any(keyword in prompt.lower() for keyword in time_keywords):
-        now = datetime.now()
-        time_string = now.strftime("The current local time is %A, %B %d, %Y at %I:%M:%S %p.")
-        
-        # Only successful output is printed
-        print("[LOCAL DATA RESPONSE]")
-        print("[OUTPUT] {time_string}".format(time_string=time_string))
-        
-        send_task_notification("🕒 Local Data Query", time_string)
-        return True
-    
-    return False 
 def speak_task(text):
     return
     piper_dir = r"D:\ollama\piper"
@@ -418,13 +397,13 @@ def main():
         sys.exit(1)
     user_prompt = " ".join(clean_prompt_parts)
     if check_mute_keywords():
-        check_to_mute(user_prompt)
+        check_and_toggle_setting(user_prompt, ['shut up', 'mute', 'silence'], "mute", True)
     else:
-        check_to_unmute(user_prompt)
+        check_and_toggle_setting(user_prompt, ['talk', 'unmute'], "mute", False)
     if USE_CLOUD:
-        check_to_offline(user_prompt)
+        check_and_toggle_setting(user_prompt, ['go offline', 'local'], "want_cloud", False)
     else:
-        check_to_online(user_prompt)
+        check_and_toggle_setting(user_prompt, ['go online', 'cloud'], "want_cloud", True)
         
     if check_for_real_time_query(user_prompt):
         sys.exit(0) # Exit on local success
@@ -518,6 +497,5 @@ def main():
 
 
 if __name__ == "__main__":
-    import multiprocessing
     multiprocessing.freeze_support()
     main()

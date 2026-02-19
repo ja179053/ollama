@@ -45,7 +45,7 @@ LOCK_SOCKET = None
 # --- Configuration ---
 Muted = check_muted()
 CURRENT_DIR = Path(__file__).resolve().parent
-MAIN_SCRIPT_PATH = CURRENT_DIR / "testfile.py"
+MAIN_SCRIPT_PATH = CURRENT_DIR / "ollama.py"
 # Unique port for the single-instance check (using a high-numbered port)
 LOCK_PORT = 60000
 LOCK_HOST = '127.0.0.1'
