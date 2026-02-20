@@ -18,6 +18,13 @@ from datetime import datetime
 #edgee tts is better tts than pyttsx3, but does not work offline
 #espeak_folder = r"D:\Ollama\eSpeak NG"
 import pygame
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+SETTINGS_PATH = os.path.join(SCRIPT_DIR, "settings.json")
+# Load this once when the script starts
+with open(os.path.join(SCRIPT_DIR, "triggers.json"), "r") as f:
+    TRIGGER_MAP = json.load(f)
+with open(SETTINGS_PATH, "r") as f:
+    SETTINGS = json.load(f)
 #region configuration
 def set_want_cloud():
     try:
@@ -39,7 +46,7 @@ def has_internet():
     except OSError:
         return False
 def save(data):
-    with open("settings.json", "w") as f:
+    with open(SETTINGS_PATH, "w") as f:
         json.dump(data, f, indent=4) # indent makes it readable
 #endregion
 # Configuration
@@ -78,19 +85,6 @@ def check_mute_keywords():
             return not data.get("mute", True)
     except:
         return True # Default to True if file is busy
-def check_and_toggle_setting(prompt, keywords, setting_key, new_value):
-    """
-    Checks if a prompt contains specific keywords to update a JSON setting.
-    """
-    if prompt.lower().strip() in keywords:
-        with open("settings.json", "r") as f:
-            data = json.load(f)
-            
-        data[setting_key] = new_value
-        save(data)
-        
-        # Success exit
-        sys.exit(0)
 #endregion
 def check_for_real_time_query(prompt):
     """Handles time queries locally and notifies on success."""
@@ -396,14 +390,20 @@ def main():
         print("[CRITICAL ERROR] Missing command prompt.", file=sys.stderr)
         sys.exit(1)
     user_prompt = " ".join(clean_prompt_parts)
-    if check_mute_keywords():
-        check_and_toggle_setting(user_prompt, ['shut up', 'mute', 'silence'], "mute", True)
-    else:
-        check_and_toggle_setting(user_prompt, ['talk', 'unmute'], "mute", False)
-    if USE_CLOUD:
-        check_and_toggle_setting(user_prompt, ['go offline', 'local'], "want_cloud", False)
-    else:
-        check_and_toggle_setting(user_prompt, ['go online', 'cloud'], "want_cloud", True)
+    print(SETTINGS_PATH)
+    #REPLACED BUNCH OF IF STATEMENTS WITH FOR LOOP TO SEARCH TRIGGERS JSON FILE
+    for key, target_value, keywords in TRIGGER_MAP:
+        # 1. Check if the setting is already what we want
+        if SETTINGS.get(key) == target_value:
+            continue
+            
+        # 2. Check if any keyword for this state is in the prompt
+        if any(word in user_prompt for word in keywords):
+            SETTINGS[key] = target_value
+            print(f"Triggered: {key} -> {target_value}")
+            save(SETTINGS)
+            sys.exit(0)
+        
         
     if check_for_real_time_query(user_prompt):
         sys.exit(0) # Exit on local success
@@ -424,7 +424,7 @@ def main():
             "stream": False,
             "options": {
                 "system": custom_system_instruction, 
-                "temperature": 0.1,
+                "temperature": 1.0,
                 "top_p": 0.5,
                 "num_predict": 750,
             }

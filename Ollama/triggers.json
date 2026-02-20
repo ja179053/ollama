@@ -1,0 +1,6 @@
+[
+    ["mute", true, ["shut up", "mute", "silence"]],
+    ["mute", false, ["talk", "unmute"]],
+    ["want_cloud", false, ["offline", "local"]],
+    ["want_cloud", true, ["online", "cloud"]]
+]
