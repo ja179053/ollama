@@ -26,16 +26,6 @@ with open(os.path.join(SCRIPT_DIR, "triggers.json"), "r") as f:
 with open(SETTINGS_PATH, "r") as f:
     SETTINGS = json.load(f)
 #region configuration
-def set_want_cloud():
-    try:
-        with open("settings.json", "r") as f:
-            data = json.load(f)
-            val = data.get("online", True)
-            #print (val, flush=True)
-            return val == True
-    except:
-        return True # Default to True if file is busy
-
 def has_internet():
     try:
         # Connect to Google's DNS on port 53 (DNS)
@@ -50,7 +40,7 @@ def save(data):
         json.dump(data, f, indent=4) # indent makes it readable
 #endregion
 # Configuration
-WANT_CLOUD = set_want_cloud()
+WANT_CLOUD = SETTINGS["online"]
 USE_CLOUD = WANT_CLOUD if has_internet() else False
 DEFAULT_MODEL = "gemma3:4b-it-qat" if not USE_CLOUD else "qwen3-vl:235b-cloud"
 OLLAMA_API_URL = "http://localhost:11434/api/generate"
@@ -206,9 +196,8 @@ def portable_ls(base_dir, args):
         return False, f"Portable ls failed: {e}"
 
 def speak_task(text):
-    return
-    piper_dir = r"D:\ollama\piper"
-    command = [os.path.join(piper_dir, "piper.exe"), "--model", os.path.join(piper_dir, "en_US-lessac-medium.onnx"), "--output_file", r"D:\Ollama\output.wav", "--overwrite"]
+    piper_dir = os.path.join(SCRIPT_DIR, "piper")
+    command = [os.path.join(piper_dir, "piper.exe"), "--model", os.path.join(piper_dir, "en_US-lessac-medium.onnx"), "--output_file", os.path.join(SCRIPT_DIR, "output.wav"), "--overwrite"]
     subprocess.run(command, check=True, capture_output=True, input=clean_tts(text), text=True)
     #You don't need the wrapper if you are not using a web based servce
     #async def amain():
@@ -219,7 +208,7 @@ def speak_task(text):
     #asyncio.run(amain())
     # 3. Play the audio file
     pygame.mixer.init()
-    pygame.mixer.music.load("output.wav")
+    pygame.mixer.music.load(os.path.join(SCRIPT_DIR, "output.wav"))
     pygame.mixer.music.play()
     
     while pygame.mixer.music.get_busy():
@@ -285,8 +274,8 @@ def check_and_execute_command(command_parts, base_dir, overwrite_mode):
         # Only successful final output is printed
         print(f"[OUTPUT]\n{final_output}")
     return True, final_output
-def say(text, file=sys.stdout):    
-        print (text, flush=True)
+def say(text, file=sys.stdout):  
+        print(f"{DEFAULT_MODEL}: {text} ", flush=True)
 # Start the voice in a separate process so we can kill it
         p = multiprocessing.Process(target=speak_task, args=(text.split(":", 3)[3].strip(),))
         p.start()# Start the microphone listener
@@ -349,8 +338,6 @@ def main():
         # Default values if the file doesn't exist yet
         print("File history not found")
     #print(f"Internet Status: {'Online' if has_internet else 'Offline'}", flush=True)
-    print(f"Targeting Model: {DEFAULT_MODEL}", flush=True)
-    #print ("Want Internet", WANT_CLOUD, flush=True)
     #print ("Use Internet", USE_CLOUD, flush=True)
     raw_args = sys.argv[1:]
     overwrite_flag = False
@@ -390,13 +377,12 @@ def main():
         print("[CRITICAL ERROR] Missing command prompt.", file=sys.stderr)
         sys.exit(1)
     user_prompt = " ".join(clean_prompt_parts)
-    print(SETTINGS_PATH)
+    #print(SETTINGS_PATH)
     #REPLACED BUNCH OF IF STATEMENTS WITH FOR LOOP TO SEARCH TRIGGERS JSON FILE
     for key, target_value, keywords in TRIGGER_MAP:
         # 1. Check if the setting is already what we want
         if SETTINGS.get(key) == target_value:
-            continue
-            
+            continue            
         # 2. Check if any keyword for this state is in the prompt
         if any(word in user_prompt for word in keywords):
             SETTINGS[key] = target_value
@@ -429,10 +415,10 @@ def main():
                 "num_predict": 750,
             }
         }
-        print_duration(time.time() - start_time) 
+        #print_duration(time.time() - start_time) 
         # 2. Ollama API call with Retry Logic (for connection issues)
         response = get_response(payload)
-        print_duration(time.time() - start_time) 
+        #print_duration(time.time() - start_time) 
         # 3. Process the successful response
         response_data = response.json()
         generated_command = response_data.get('response', '').strip()
@@ -494,7 +480,6 @@ def main():
         if success:
              send_task_notification("✅ Task Completed", "Successfully ran command for prompt: {prompt}...".format(prompt=user_prompt[:40]))
         # Note: File creation notification is handled inside handle_content_mode
-
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
