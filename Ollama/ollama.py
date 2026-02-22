@@ -16,6 +16,8 @@ import subprocess
 import sys
 import time
 import threading
+#import win32gui
+#import win32console
 # Third-Party Imports
 import requests
 import shutil
@@ -115,7 +117,7 @@ def clean_tts(text):
     """Removes asterisks, backslashes, and extra symbols for natural speech."""
     # 1. Remove Markdown bold/italic (e.g., **text** or *text*)
     text = text.encode('ascii', 'ignore').decode('ascii').strip()
-    text = text.replace("**", "").replace("*", "")
+    text = text.replace("#", "").replace("*", "").replace("`", "")
     text = text.replace("Mmm", "").replace("mmm", "")
     #text = text.replace("\n", "")
     text = text.replace("~~", ",").replace("~", ",")
@@ -358,8 +360,8 @@ def get_response(payload):
         for line in response.iter_lines(chunk_size=1):
             if line:
                 if first_token:
-                    stop_loading.set()  
-                    #spinner_thread.join(timeout=0.1)
+                    stop_loading.set()
+                    spinner_thread.join(timeout=0.1)
                     actual_duration = time.time() - start_time                    
                     first_token = False
                     save_stats()
@@ -370,21 +372,22 @@ def get_response(payload):
                     if content:
                         # THE FIX: Write every character directly to the console hardware
                         for char in content:
-                            msvcrt.putch(char.encode())
+                            msvcrt.putwch(char)
                         
                         full_content += content
                         sentence_buffer += content
 
                         # TTS handling (stays in the background)                        
-                        if any(c in content for c in [".", "!", "?", "\n"]):
+                        if not SETTINGS["mute"] and any(c in content for c in [".", "!", "?", "\n"]):
                             if interrupted: 
                                 break
-                            sentence = sentence_buffer.strip()
+                            sentence = clean_tts(sentence_buffer.strip())
                             if sentence:
-                                # Just toss it in. The worker handles the "wait" logic.
+                                #Use to find irredular characters
+                                #print ("sentence" + sentence)
                                 l = get_system_lang()
                                 samples, sample_rate = kokoro.create(
-                                    text=clean_tts(sentence), 
+                                    text=sentence, 
                                     voice=SELECTED_VOICE, 
                                     speed=1.25, 
                                     lang=l
@@ -393,14 +396,15 @@ def get_response(payload):
                                 # Send the raw audio to the player thread
                                 speech_queue.put((samples, sample_rate))
                                 sentence_buffer = ""
-                                                            # 2. Start the speaker ONLY if it hasn't started yet for this response
+                                 # 2. Start the speaker ONLY if it hasn't started yet for this response
                                 if not tts_started:
                                     task = threading.Thread(target=speak_task, daemon=False)
                                     tts_started = True # Ensure we don't spawn 50 threads
                                     task.start()
                 except json.JSONDecodeError:
+                    print("json decode error")
                     continue
-        #print(speech_queue.qsize())       
+        #print(speech_queue.qsize()) 
         return full_content
     except requests.exceptions.Timeout:
             print("\n[ERROR] Ollama didn't respond in time. GPU might be overloaded.")
@@ -450,7 +454,7 @@ def loading_bar(stop_event):
         
         # Direct write to console memory
         for char in msg:
-            msvcrt.putch(char.encode('ascii'))
+            msvcrt.putwch(char)
             
         time.sleep(0.1)
 
@@ -460,14 +464,14 @@ def loading_bar(stop_event):
     while not stop_event.is_set():
         msg = f"\r{chars[i % 4]} AI is almost ready...    "
         for char in msg:
-            msvcrt.putch(char.encode('ascii'))
+            msvcrt.putwch(char)
         time.sleep(0.1)
         i += 1
     
     # 3. CLEAN UP
     clear_msg = "\r" + (" " * 40) + "\r"
     for char in clear_msg:
-        msvcrt.putch(char.encode('ascii'))
+        msvcrt.putwch(char)
 
 #region saving
 def save_stats():
@@ -536,7 +540,7 @@ def main():
             return data["summary"], data["exchange_count"]
     except FileNotFoundError:
         # Default values if the file doesn't exist yet
-        print("File history not found", flush=True)
+        print("File history not found", flush=False)
     #print(f"Internet Status: {'Online' if has_internet else 'Offline'}", flush=True)
     #print ("Use Internet", USE_CLOUD, flush=True)
     
@@ -626,14 +630,13 @@ def main():
         #Next clean up the end of the program. content history. File creation
         generated_command = response.strip()
         conversation_history += f"{response}\n"
-        #print (len(conversation_history))
-        if len(conversation_history) > 10000:
-            payload.prompt = f"Summarize the following conversation history concisely, keeping all key facts and user preferences:\n{conversation_history}"
-            conversation_history = get_response(payload)
+        print (len(conversation_history))   
+        if len(conversation_history) > 9000:
+            payload["prompt"] = f"Summarize the following conversation history concisely, keeping all key facts and user preferences:\n{conversation_history}"
+            #conversation_history = get_response(payload)
         if not generated_command:
             print(f"[NON-EXECUTABLE OUTPUT]: Ollama generated an empty response.", file=sys.stdout)
             sys.exit(0)
-
         # --- Content Mode Path ---
         if is_content_request:
             # Pass the custom extension to the handler
