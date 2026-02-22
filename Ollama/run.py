@@ -1,5 +1,6 @@
 import atexit
 import json
+import os
 import msvcrt
 import queue
 import socket
@@ -11,6 +12,8 @@ import time
 import winsound
 from pathlib import Path
 # ... other imports
+
+os.system('color 2A')
 
 def play_success_tone():
     # winsound.Beep(frequency, duration_ms)
@@ -199,32 +202,27 @@ def cli_listener():
     while True:
         try:
             user_input = None
-
             # 1. PRIORITY: Check Voice Queue
-            # If the background thread found speech, this triggers IMMEDIATELY.
-            if not Muted and intern:
+            # If the background thread found speech, this triggers IMMEDIATELY.            
+            if not Muted:
                 if not speech_queue.empty():
                     user_input = speech_queue.get()
                     print(f"PROMPT> {user_input} (Voice)", flush=True)                
-                    with speech_queue.mutex:
-                        speech_queue.queue.clear()
+                    
             # 2. HYBRID: Check Keyboard (Non-blocking)
-            # msvcrt.kbhit() returns True ONLY if a key is waiting in the buffer.
+            # returns True ONLY if a key is waiting in the buffer.
             elif msvcrt.kbhit():
                 user_input = input("PROMPT> ")# 3. EXECUTION: If we have input (from either source), run it.
             if user_input:
-                play_success_tone()
-                
+                play_success_tone()                
                 # Standard exit logic
                 if user_input.lower() in ['exit', 'quit']:
                     if stop_listening:
                         stop_listening(wait_for_stop=False)
                     print("\nShutting down...")
                     sys.exit(0)
-
                 if not user_input.strip():
                     continue
-
                 # Run the command
                 command = [sys.executable, str(MAIN_SCRIPT_PATH), user_input]
                 #print(f"\n[EXECUTOR] Running command: {' '.join(command)}")
@@ -267,6 +265,7 @@ def voice_callback(recognizer, audio):
         pass # Ignore unintelligible noise
     except sr.RequestError:
         print("\n[Voice Error] Google Service down.")
+        
 if __name__ == "__main__":
     # 1. Single-instance check
     check_and_bind_socket()

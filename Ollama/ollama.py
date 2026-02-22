@@ -2,29 +2,46 @@
 # Standard Library Imports
 import io
 import json
+import locale
+import math
+import msvcrt
 import multiprocessing
 import os
+import queue
+speech_queue = queue.Queue()
 import re
 import shlex
 import socket
 import subprocess
 import sys
 import time
+import threading
 # Third-Party Imports
 import requests
 import shutil
 import speech_recognition as sr
 from datetime import datetime
 #edgee tts is better tts than pyttsx3, but does not work offline
+#kokora sounds like a audiobook
+#piper sounds human but not appealing
 #espeak_folder = r"D:\Ollama\eSpeak NG"
-import pygame
+from kokoro_onnx import Kokoro
+kokoro = Kokoro("kokoro-v1.0.onnx", "voices-v1.0.bin")
+import sounddevice as sd
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_PATH = os.path.join(SCRIPT_DIR, "settings.json")
+STATS_FILE = os.path.join(SCRIPT_DIR, "stats.json")
 # Load this once when the script starts
 with open(os.path.join(SCRIPT_DIR, "triggers.json"), "r") as f:
     TRIGGER_MAP = json.load(f)
-with open(SETTINGS_PATH, "r") as f:
+with open(os.path.join(SCRIPT_DIR, "settings.json"), "r") as f:
     SETTINGS = json.load(f)
+with open(STATS_FILE, 'r') as f:
+        stats = json.load(f)
+SELECTED_VOICE = ""
+interrupted = False
+time_taken = 15
+conversation_history = ""
 #region configuration
 def has_internet():
     try:
@@ -43,7 +60,7 @@ def save(data):
 WANT_CLOUD = SETTINGS["online"]
 USE_CLOUD = WANT_CLOUD if has_internet() else False
 DEFAULT_MODEL = "gemma3:4b-it-qat" if not USE_CLOUD else "qwen3-vl:235b-cloud"
-OLLAMA_API_URL = "http://localhost:11434/api/generate"
+OLLAMA_API_URL = "http://127.0.0.1:11434/api/generate"
 # CRITICAL SYSTEM INSTRUCTION (Aggressive)
 DEFAULT_SYSTEM_INSTRUCTION = (
 # Updated, even more aggressive system instruction
@@ -94,11 +111,15 @@ def check_for_real_time_query(prompt):
     return False 
 #endregion
 def clean_tts(text):
-    print ("I said" , text, flush=True)
+    #print ("I said" , text, flush=True)
     """Removes asterisks, backslashes, and extra symbols for natural speech."""
     # 1. Remove Markdown bold/italic (e.g., **text** or *text*)
     text = text.encode('ascii', 'ignore').decode('ascii').strip()
     text = text.replace("**", "").replace("*", "")
+    text = text.replace("Mmm", "").replace("mmm", "")
+    #text = text.replace("\n", "")
+    text = text.replace("~~", ",").replace("~", ",")
+    #text = text.replace(".", ",").replace("?", ",").replace("!", ",")
     
     # 2. Remove backslashes and technical characters
     text = text.replace("\\", " ").replace("_", " ")
@@ -195,26 +216,35 @@ def portable_ls(base_dir, args):
     except Exception as e:
         return False, f"Portable ls failed: {e}"
 
-def speak_task(text):
-    piper_dir = os.path.join(SCRIPT_DIR, "piper")
-    command = [os.path.join(piper_dir, "piper.exe"), "--model", os.path.join(piper_dir, "en_US-lessac-medium.onnx"), "--output_file", os.path.join(SCRIPT_DIR, "output.wav"), "--overwrite"]
-    subprocess.run(command, check=True, capture_output=True, input=clean_tts(text), text=True)
-    #You don't need the wrapper if you are not using a web based servce
-    #async def amain():
-        #communicate = edge_tts.Communicate(clean_tts(text), voice)
-        #await communicate.save("output.mp3")
+def speak_task():
+    global interrupted    
+    while True:
+        try:
+            # Expecting a tuple of (samples, sample_rate)
+            item = speech_queue.get(timeout=5) 
+            
+            if item is None: break # Signal to kill the thread
+            
+            if interrupted: 
+                speech_queue.task_done()
+                interrupted = False # Reset for next playback
+                continue
+            
+            samples, sample_rate = item
+            
+            # Instant playback, no generation lag
+            sd.play(samples, sample_rate)
+            
+            while sd.get_stream().active:
+                if interrupted: 
+                    sd.stop()
+                    break
+                sd.sleep(100)
 
-    # Generate the audio file
-    #asyncio.run(amain())
-    # 3. Play the audio file
-    pygame.mixer.init()
-    pygame.mixer.music.load(os.path.join(SCRIPT_DIR, "output.wav"))
-    pygame.mixer.music.play()
-    
-    while pygame.mixer.music.get_busy():
-        time.sleep(0.1)
-    
-    pygame.mixer.quit()
+        except queue.Empty:
+            # ONLY break when the queue has actually been empty for 5 seconds
+            #print("Queue empty, closing voice process.")
+            break
 
 # File Safety and Execution (shell=False)
 def check_and_execute_command(command_parts, base_dir, overwrite_mode):
@@ -274,77 +304,248 @@ def check_and_execute_command(command_parts, base_dir, overwrite_mode):
         # Only successful final output is printed
         print(f"[OUTPUT]\n{final_output}")
     return True, final_output
-def say(text, file=sys.stdout):  
-        print(f"{DEFAULT_MODEL}: {text} ", flush=True)
+def say():
+        #print(f"{DEFAULT_MODEL}", flush=True)
+        #i dont feel the need to have two settings for a silent mode. May adjust due to user feedback
+        global interrupted
+        if(SETTINGS["mute"]):
+            sys.exit(0)
 # Start the voice in a separate process so we can kill it
-        p = multiprocessing.Process(target=speak_task, args=(text.split(":", 3)[3].strip(),))
-        p.start()# Start the microphone listener
+        task = threading.Thread(target=speak_task)
+        #task.start()
+        #p = multiprocessing.Process(target=speak_task)
+        #p.start()# Start the microphone listener
         r = sr.Recognizer()
         with sr.Microphone() as source:
         # Lower the threshold so it's sensitive to your voice
             r.adjust_for_ambient_noise(source, duration=1)
-            r.energy_threshold += 1000000 
-        
-            print(" [Listening for interruption...]", end="\r", flush=True)
-        
-            while p.is_alive():
+            r.energy_threshold += 1000000         
+            print(" [Listening for interruption...]", end="\r", flush=True)        
+            while task.is_alive():
                 try:
                 # listen() blocks for a tiny bit to check for sound
                 # phrase_time_limit=1 means it checks in 1-second chunks
-                    r.listen(source, timeout=0.1, phrase_time_limit=1)
-                
+                    r.listen(source, timeout=0.1, phrase_time_limit=1)                
                 # If we get here, sound was detected!
-                    print("\n[!] Interruption detected. Stopping speech.", flush=True)
-                    p.terminate()
+                    interrupt()# Stops current audio
+                    #with speech_queue.mutex:
+                        #speech_queue.queue.clear() # Clears the "to-do list"
+                    #p.terminate()
                     break
                 except (sr.WaitTimeoutError, sr.UnknownValueError):
                 # No speech detected yet, keep looping while AI is talking
-                    continue    
-        p.join() # Clean up the process
-def get_response(payload):  
-        #print ("doing something")  
-        response = None
-        max_retries = 3
-        for api_attempt in range(max_retries):
-            try:
-                response = requests.post(OLLAMA_API_URL, json=payload, timeout=180)
-                response.raise_for_status()
-                return response
-                break 
-            except requests.exceptions.RequestException as e:
-                # CRITICAL FAILURE: Connection issue. Fail loudly with print, then exit.
-                if api_attempt < max_retries - 1 and (response is None or response.status_code in [429, 500, 502, 503, 504]):
-                    time.sleep(1 * (2 ** api_attempt))
-                else:
-                    print(f"[CRITICAL ERROR] Ollama connection failed. Is the server running? Details: {e}", file=sys.stderr)
-                    sys.exit(1) # Exit loudly
+                    continue 
+        #if not interrupted:
+            #task.join() # Clean up the process
+def get_response(payload):
+    global actual_duration
+    global voice_proc
+    global interrupted
+    tts_started = False
+    start_time = time.time()
+    stop_loading = threading.Event()    
+    spinner_thread = threading.Thread(target=loading_bar, args=(stop_loading,), daemon=True)
+    spinner_thread.start()    
+    try:        
+        # Use stream=True and a small chunk_size to keep the pipe open
+        response = requests.post(OLLAMA_API_URL, json=payload, stream=True, timeout=180)
+        response.raise_for_status()        
+        
+        first_token = True
+        full_content = ""
+        sentence_buffer = ""
+        # Using chunk_size=1 to ensure the loop ticks the moment a byte arrives
+        for line in response.iter_lines(chunk_size=1):
+            if line:
+                if first_token:
+                    stop_loading.set()  
+                    #spinner_thread.join(timeout=0.1)
+                    actual_duration = time.time() - start_time                    
+                    first_token = False
+                    save_stats()
+                try:
+                    chunk = json.loads(line.decode('utf-8'))
+                    content = chunk.get('response', '')
+                    
+                    if content:
+                        # THE FIX: Write every character directly to the console hardware
+                        for char in content:
+                            msvcrt.putch(char.encode())
+                        
+                        full_content += content
+                        sentence_buffer += content
+
+                        # TTS handling (stays in the background)                        
+                        if any(c in content for c in [".", "!", "?", "\n"]):
+                            if interrupted: 
+                                break
+                            sentence = sentence_buffer.strip()
+                            if sentence:
+                                # Just toss it in. The worker handles the "wait" logic.
+                                l = get_system_lang()
+                                samples, sample_rate = kokoro.create(
+                                    text=clean_tts(sentence), 
+                                    voice=SELECTED_VOICE, 
+                                    speed=1.25, 
+                                    lang=l
+                                )
+
+                                # Send the raw audio to the player thread
+                                speech_queue.put((samples, sample_rate))
+                                sentence_buffer = ""
+                                                            # 2. Start the speaker ONLY if it hasn't started yet for this response
+                                if not tts_started:
+                                    task = threading.Thread(target=speak_task, daemon=False)
+                                    tts_started = True # Ensure we don't spawn 50 threads
+                                    task.start()
+                except json.JSONDecodeError:
+                    continue
+        #print(speech_queue.qsize())       
+        return full_content
+    except requests.exceptions.Timeout:
+            print("\n[ERROR] Ollama didn't respond in time. GPU might be overloaded.")
+            return ""
+    except Exception as e:
+            #stop_loading.set()
+            print(f"\n[ERROR] {e}")
+            return ""
+def interrupt():
+    global interrupted
+    print("\n[!] Interruption detected. Stopping speech.", flush=True)
+    interrupted = True
+    sd.stop()  
+    with speech_queue.mutex:
+        speech_queue.queue.clear()
+        speech_queue.all_tasks_done.notify_all()
+    os._exit(0)
+def await_interruption():
+    #my_window = win32console.GetConsoleWindow()
+        """This runs in the background while get_response is streaming."""
+        while not interrupted:
+            # KEYBOARD
+           # if win32gui.GetForegroundWindow() == my_window:
+                if msvcrt.kbhit():
+                    msvcrt.getch()
+                    interrupt()
+                    break            
+            # VOICE (Using the 'energy sliver' approach to prevent lag)
+            # Add your r.listen or energy check here            
+                time.sleep(0.05)
+            
 def print_duration(duration):
             print(duration, flush=True)
+# Main Execution Loop
+def loading_bar(stop_event):
+    # These characters are hardcoded to the Windows console
+    chars = ["|", "/", "-", "\\"]
+    
+    # 1. FORCED 15-SECOND COUNTDOWN
+    # 150 iterations * 0.1s = 15 seconds
+    for i in range(150):
+        if stop_event.is_set(): break  # Stop early if AI responds fast
+        
+        # We calculate the seconds remaining to show progress
+        secs_left = stats["duration"] - (i // 10)
+        msg = f"\r{chars[i % 4]} AI is thinking... [{secs_left}s] "
+        
+        # Direct write to console memory
+        for char in msg:
+            msvcrt.putch(char.encode('ascii'))
+            
+        time.sleep(0.1)
+
+    # 2. FALLBACK SPINNER 
+    # (If the 15s are up but the AI is still loading the model)
+    i = 0
+    while not stop_event.is_set():
+        msg = f"\r{chars[i % 4]} AI is almost ready...    "
+        for char in msg:
+            msvcrt.putch(char.encode('ascii'))
+        time.sleep(0.1)
+        i += 1
+    
+    # 3. CLEAN UP
+    clear_msg = "\r" + (" " * 40) + "\r"
+    for char in clear_msg:
+        msvcrt.putch(char.encode('ascii'))
+
+#region saving
+def save_stats():
+    stats["duration"] = time_taken        
+    with open(STATS_FILE, 'w') as f:
+        json.dump(stats, f)
 def save_context(summary):
     context_data = {
         "summary": summary
     }
     with open("context_history.json", "w") as f:
         json.dump(context_data, f, indent=4)
-conversation_history = ""
-# Main Execution Loop
-def main():
+#endregion
+def get_local_voice():
+    voices_json_path = os.path.join(SCRIPT_DIR, "local_voices.json")
+    
+    # 1. Create it if it doesn't exist
+    if not os.path.exists(voices_json_path):
+        print("[SYSTEM] Voice index missing. Generating...")
+        # Re-using your logic to find files
+        voice_files = [
+            f for f in os.listdir(SCRIPT_DIR) 
+            if f.endswith((".bin", ".pth")) and "voices-v1.0" not in f
+        ]
+        
+        initial_data = {
+            "selected": 0,
+            "count": len(voice_files),
+            "voices": [{"name": os.path.splitext(f)[0], "file": f} for f in voice_files]
+        }
+        with open(voices_json_path, "w") as f:
+            json.dump(initial_data, f, indent=4)
+        data = initial_data
+    else:
+        with open(voices_json_path, "r") as f:
+            data = json.load(f)
+
+    # 2. Extract the voice based on the index
+    voices_list = data.get("voices", [])
+    selected_idx = data.get("selected", 0)
+    if not voices_list:
+        print("[ERROR] No voice files found in directory!")
+        return None
+
+    # Safety check: if index is invalid, reset to 0
+    if selected_idx >= len(voices_list) or selected_idx < 0:
+        selected_idx = 0
+    
+    return voices_list[selected_idx]
+
+def get_system_lang():
+    # This gets the default locale (e.g., ('en_US', 'UTF-8'))
+    loc = locale.getdefaultlocale()[0]     
+    if loc:
+        # Convert en_US -> en-us (Kokoro prefers lower-case hyphens)
+        return loc.replace("_", "-").lower()
+    
+    return "en-gb" # Fallback if system language can't be found
+def main():    
+    global SELECTED_VOICE
     start_time = time.time()
+    SELECTED_VOICE = get_local_voice()["name"]
     try:
         with open("context_history.json", "r") as f:
             data = json.load(f)
             return data["summary"], data["exchange_count"]
     except FileNotFoundError:
         # Default values if the file doesn't exist yet
-        print("File history not found")
+        print("File history not found", flush=True)
     #print(f"Internet Status: {'Online' if has_internet else 'Offline'}", flush=True)
     #print ("Use Internet", USE_CLOUD, flush=True)
+    
+    #for commnds
     raw_args = sys.argv[1:]
-    overwrite_flag = False
+    overwrite_flag = False    
     custom_system_instruction = DEFAULT_SYSTEM_INSTRUCTION
     custom_extension = None # New flag for custom extension
     clean_prompt_parts = []
-    
     # CRITICAL FIX: Determine base_output_dir from the script's own location, not os.getcwd()
     try:
         # Get the absolute path of the directory containing this script file 
@@ -376,8 +577,8 @@ def main():
     if not clean_prompt_parts:
         print("[CRITICAL ERROR] Missing command prompt.", file=sys.stderr)
         sys.exit(1)
+    #Once verified to be a clean prompt, a user prompt is created
     user_prompt = " ".join(clean_prompt_parts)
-    #print(SETTINGS_PATH)
     #REPLACED BUNCH OF IF STATEMENTS WITH FOR LOOP TO SEARCH TRIGGERS JSON FILE
     for key, target_value, keywords in TRIGGER_MAP:
         # 1. Check if the setting is already what we want
@@ -389,12 +590,12 @@ def main():
             print(f"Triggered: {key} -> {target_value}")
             save(SETTINGS)
             sys.exit(0)
-        
-        
     if check_for_real_time_query(user_prompt):
         sys.exit(0) # Exit on local success
-
-    # NEW: Check for Content Mode activation keywords
+    
+    #Check for Content Mode activation keywords
+    #After the prompt cleaning checks are complete, Ollama has to be used.
+    #Keywords can be used to perform events with the output text
     content_keywords = ['save', 'file', 'write', 'create', 'document']
     is_content_request = any(keyword in user_prompt.lower() for keyword in content_keywords) or custom_extension
 
@@ -407,28 +608,30 @@ def main():
         payload = {
             "model": DEFAULT_MODEL,
             "prompt": conversation_history,
-            "stream": False,
+            "stream": True,
             "options": {
                 "system": custom_system_instruction, 
                 "temperature": 1.0,
                 "top_p": 0.5,
                 "num_predict": 750,
+                "keep_alive": 0,
+                "repeat_penalty": 1.1
             }
         }
-        #print_duration(time.time() - start_time) 
-        # 2. Ollama API call with Retry Logic (for connection issues)
+        # Next listen for interruptions
+        monitor = threading.Thread(target=await_interruption, daemon=True)
+        monitor.start()
+        # 2. Ollama API call
         response = get_response(payload)
-        #print_duration(time.time() - start_time) 
-        # 3. Process the successful response
-        response_data = response.json()
-        generated_command = response_data.get('response', '').strip()
+        #Next clean up the end of the program. content history. File creation
+        generated_command = response.strip()
         conversation_history += f"{response}\n"
         #print (len(conversation_history))
         if len(conversation_history) > 10000:
             payload.prompt = f"Summarize the following conversation history concisely, keeping all key facts and user preferences:\n{conversation_history}"
             conversation_history = get_response(payload)
         if not generated_command:
-            say(f"[NON-EXECUTABLE OUTPUT]: Ollama generated an empty response.", file=sys.stdout)
+            print(f"[NON-EXECUTABLE OUTPUT]: Ollama generated an empty response.", file=sys.stdout)
             sys.exit(0)
 
         # --- Content Mode Path ---
@@ -458,11 +661,15 @@ def main():
     # This keeps the full path if the AI provided one, but starts at the right spot
             raw_command_line = " ".join(tokens[start_index:])
         else:
+            global time_taken
             # Report the status of conversational output
             end_time = time.time()
             current_time_str = time.strftime("%H:%M:%S", time.localtime(end_time))
             duration = end_time - start_time
-            say(f"[NON-EXECUTABLE OUTPUT] {current_time_str} [{duration:.2f}s]: {generated_command}", file=sys.stdout)
+            #say(f"[NON-EXECUTABLE OUTPUT] {current_time_str} [{duration:.2f}s]: {generated_command}", file=sys.stdout)
+            print(f"[NON-EXECUTABLE OUTPUT] {current_time_str} [{duration:.2f}s]")
+            time_taken = math.ceil(duration)
+            save_stats()
             sys.exit(0) # Exit successfully (not a critical failure)
 
         # Print the cleaned command line before execution

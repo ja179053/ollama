@@ -6,7 +6,13 @@ Shared packages: jsn socket subprocess sys time speech_recognition
 
     Json is for manipulating the settings file.
 
+    MSVCRT "interrupts" the program from speaking when a new prompt is submitted. [OPTIONAL] AND prints the output during streaming.
+
+    OS handles path formatting and changes the window colour.
+
     Plyer is a third party library for toaster notifications.
+
+    Queue changes behaviour during text output to wait until voice queue is not empty or TTS queue is empty.
 
     Requests is a third party library that handles HTTP POST requests to the Ollama API.
 
@@ -20,18 +26,18 @@ Shared packages: jsn socket subprocess sys time speech_recognition
 
     Time is a unique feature implemented for debugginng execution time, and delaying threads[NON-OPTIONAL]
 
+    Threading is for creating backgorund threads to run background checks without pausing the program.
+
+        MSVCRT AND Speech Recognition both use queue to funnel input into a queue on interruption. [NON-OPTIONAL]
+
+        Playing TTS with threading instead of multiprocessing has less failures over multiple voice models.
+
 # Python Files
 Run PY is a long single-instance controller responsible for reading user input and sending it to the relevant LLM.
 
         Atexit cleans the network sockets when the script is closed (at exit).
 
         Pathlib converts paths into objects for clean, efficient path manipulation. Because everything is an object in python, paths here are global constants and are implicitly Read Only.
-
-        Threading is for creating backgorund threads to run background checks without pausing the program.
-
-            MSVCRT "interrupts" the program from speaking when a new prompt is submitted. [OPTIONAL]
-
-            MSVCRT AND Speech Recognition both use queue to funnel input into a queue on interruption. [NON-OPTIONAL]
         
         Winsound gives audio feedback for task status updates. [OPTIONAL]
             
@@ -43,11 +49,17 @@ Run PY is a long single-instance controller responsible for reading user input a
 
 Ollama PY sends the prompt to the right Ollama model. Using the settings and specific prompt keywords, it decides what to say and which features to activate simultaneously.
 
-    IO forces the console into UTF-8 if emojis are produced
+    Datetime greeting messages and bypassing the LLM if a simple question is asked about the current time. 
 
-    OS handles path formatting
+    IO forces the console into UTF-8 if emojis are produced.
 
-    Re searches prompts for keywords
+    Locale gets the system language.
+
+    Kokoro is an AI voice package that sounds more human than Piper and pyttsx3 and espeak.
+
+    Math allows rounding (specifically up).
+
+    Re searches prompts for keywords.
 
     Multiprocessing kills subprocesses on interruption and maintains the main process with a process lock.
 
@@ -55,7 +67,7 @@ Ollama PY sends the prompt to the right Ollama model. Using the settings and spe
 
     Shutil ensures files exists before they are executed
 
-    Datetime greeting messages and bypassing the LLM if a simple question is asked about the current time. 
+    Sound Device is used to play TTS as a stream and select individual outputs.
 
 Settings JSON is a load of settings that are easy to read and write.
     Mute is whether voice-to-text features are enabled.
@@ -75,3 +87,5 @@ Current issues are:
     searching history for specific keywords
 
     portfolio management of specified files
+
+    output streaming
