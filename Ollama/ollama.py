@@ -28,11 +28,11 @@ from datetime import datetime
 #piper sounds human but not appealing
 #espeak_folder = r"D:\Ollama\eSpeak NG"
 from kokoro_onnx import Kokoro
-kokoro = Kokoro("kokoro-v1.0.onnx", "voices-v1.0.bin")
 import sounddevice as sd
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_PATH = os.path.join(SCRIPT_DIR, "settings.json")
 STATS_FILE = os.path.join(SCRIPT_DIR, "stats.json")
+kokoro = Kokoro(os.path.join(SCRIPT_DIR, "kokoro-v1.0.onnx"), os.path.join(SCRIPT_DIR, "voices-v1.0.bin"))
 # Load this once when the script starts
 with open(os.path.join(SCRIPT_DIR, "triggers.json"), "r") as f:
     TRIGGER_MAP = json.load(f)
